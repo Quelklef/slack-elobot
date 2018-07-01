@@ -16,7 +16,7 @@ Then edit the token value in config.json to match the one acquired from https://
 python elobot.py
 ```
 
-Tested on Python 2.7
+Tested on Python 2.7 and 3.x.
 
 ## How to use
 
