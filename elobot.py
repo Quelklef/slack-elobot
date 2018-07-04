@@ -223,7 +223,6 @@ class EloBot:
         self.talk('```' + tabulate(table, headers=['Name', 'ELO', 'Wins', 'Losses', 'Streak']) + '```')
 
     def print_unconfirmed(self):
-        # TODO: It might be nicer that people that need to confirm are just suffixed by '*' or something
         table = []
 
         # TODO: There must be a cleaner way to do this line
@@ -232,14 +231,13 @@ class EloBot:
             match_datetime_pst = match_datetime_utc.astimezone(to_zone)
             table.append([
                 match.id,
-                ' '.join(map(lambda p: self.slack_client.get_name(p.handle), filter(lambda p: p.pending, match.players))),
-                ' '.join(map(lambda p: self.slack_client.get_name(p.handle), match.winners)),
-                ' '.join(map(lambda p: self.slack_client.get_name(p.handle), match.losers)),
+                ' '.join(map(lambda p: self.slack_client.get_name(p.handle) + ('*' if p.pending else ''), match.winners)),
+                ' '.join(map(lambda p: self.slack_client.get_name(p.handle) + ('*' if p.pending else ''), match.losers)),
                 '{} - {}'.format(match.winners_score, match.losers_score),
                 match_datetime_pst.strftime('%m/%d/%y %I:%M %p')
             ])
 
-        self.talk('```' + tabulate(table, headers=['Match', 'Needs to Confirm', 'Winning team', 'Losing team', 'Score', 'Date']) + '```')
+        self.talk('```* Needs to confirm\n' + tabulate(table, headers=['Match', 'Winning team', 'Losing team', 'Score', 'Date']) + '```')
 
 if __name__ == '__main__':
     with open('config.json') as config_data:
