@@ -17,14 +17,6 @@ class BaseModel(Model):
         database = db
 
 
-class Rankee():
-    """Rankee is an *in memory only* object that is built up by replaying the match history."""
-    def __init__(self):
-        self.wins = 0
-        self.losses = 0
-        self.rating = 1500
-
-
 @needs_table
 class Match(BaseModel):
     winners_score = IntegerField()
@@ -52,4 +44,3 @@ class Player(BaseModel):
     won     = BooleanField()
     handle  = CharField()
     pending = BooleanField(default=True)
-

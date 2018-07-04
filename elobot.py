@@ -2,17 +2,18 @@ import time
 import json
 import re
 import itertools as it
-from slackclient import SlackClient
-from tabulate import tabulate
-from peewee import *
 from datetime import datetime
 from dateutil import tz
 from collections import defaultdict
 
+from slackclient import SlackClient
+from tabulate import tabulate
+from peewee import *
+
 from models import *
 from util import mean, show
-from elo import rank_game
 from patterns import *
+from rankee import get_elo, get_wins, get_losses, observe_match, rankees_init
 
 from_zone = tz.gettz('UTC')
 to_zone = tz.gettz('America/Los_Angeles')
@@ -56,49 +57,30 @@ class SlackClient(SlackClient):
             self.server.ping()
             self.last_ping = now
 
-class EloBot:
-    rankees = defaultdict(Rankee)  # TODO: Feels wrong
 
+class EloBot:
     def __init__(self, slack_client, channel_id, name, min_streak_len):
         self.name = name
         self.slack_client = slack_client
         self.min_streak_len = min_streak_len
         self.channel_id = channel_id
 
-        self.init_rankees()
+        # Map from handle to elo_cache
+        self.elo_cache = defaultdict(int)
+
+        self.flush_elo_cache(verbose=False)
         self.run()
 
-    def apply_match(self, match: Match, *, verbose=False):  # TODO: Global verbosity
-        """
-        Apply a match, updating all player's ELOs.
-        Return a defaultdict mapping user handle to ELO delta.
-        """
-        # TODO: handle unequal team sizes?
-        avg_winner = mean(map(lambda r: self.rankees[r.handle].rating, match.winners))
-        avg_loser  = mean(map(lambda r: self.rankees[r.handle].rating, match.losers))
-        total_deltas = defaultdict(float)
-
-        for winner in match.winners:
-            winner_elo_delta, loser_elo_delta = rank_game(self.rankees[winner.handle].rating, avg_loser)
-            total_deltas[winner.handle] += winner_elo_delta
-            self.rankees[winner.handle].rating += winner_elo_delta
+    def flush_elo_cache(self, *, verbose=True):
+        """Update stored elo_cache. If verbose, tell everyone their ELO change since last flush."""
+        # TODO: Inefficient, just as the other one
+        handles = set(map(lambda p: p.handle, Player.select()))
+        for handle in handles:
+            old_elo = self.elo_cache[handle]
+            new_elo = get_elo(handle)
+            self.elo_cache[handle] = new_elo
             if verbose:
-                self.talk_to(winner.handle, f'Your ELO is now {self.rankees[winner.handle].rating} ({show(winner_elo_delta)})')
-        for loser in match.losers:
-            winner_elo_delta, loser_elo_delta = rank_game(avg_winner, self.rankees[loser.handle].rating)
-            total_deltas[loser.handle] += loser_elo_delta
-            self.rankees[loser.handle].rating += loser_elo_delta
-            if verbose:
-                self.talk_to(loser.handle, f'Your ELO is now {self.rankees[loser.handle].rating} ({show(loser_elo_delta)})')
-
-        return total_deltas
-
-    def init_rankees(self):
-        """Initializes self.rankees with the games stored in the database."""
-        matches = Match.select(Match).order_by(Match.id)
-        for match in matches:
-            if not match.pending:
-                self.apply_match(match)
+                self.talk_to(handle, f'Your ELO is {new_elo} ({show(new_elo - old_elo)})')
 
     def talk(self, message):
         """Send a message to the Slack channel"""
@@ -109,7 +91,7 @@ class EloBot:
         message = message[0].lower() + message[1:]
 
         if isinstance(handle_s, list) or isinstance(handle_s, set):
-            self.talk(' '.join(f'<@{handle}>' for handle in set(handle_s)) + ', ' + message)
+            self.talk(', '.join(f'<@{handle}>' for handle in set(handle_s)) + ': ' + message)
         else:
             self.talk(f'<@{handle_s}>, {message}')
 
@@ -163,34 +145,12 @@ class EloBot:
         except Exception:  #TODO
             self.talk(f'No match #{match_id}!')
 
-    def get_pending(self, match_id):
-        """Get a pending match or say an error and return None"""
-        match = self.get_match(match_id)
-        if not match:
-            return None
-        if not match.pending:
-            self.talk(f'Match #{match_id} is not pending!')
-            return None
-        return match
-
     def game(self, user_handle, winner_handles, loser_handles, winners_score, losers_score):
-        match = Match.create(
-            winners_score=winners_score,
-            losers_score=losers_score,
-        )
-
+        match = Match.create(winners_score=winners_score, losers_score=losers_score)
         for winner_handle in winner_handles:
-            Player.create(
-                handle=winner_handle,
-                match=match,
-                won=True,
-            )
+            Player.create(handle=winner_handle, match=match, won=True)
         for loser_handle in loser_handles:
-            Player.create(
-                handle=loser_handle,
-                match=match,
-                won=False,
-            )
+            Player.create(handle=loser_handle, match=match, won=False)
 
         self.confirm(user_handle, match.id)
         self.talk_to(
@@ -209,20 +169,14 @@ class EloBot:
             self.talk_to(user_handle, 'No unconfirmed matches!')
             return
 
-        # TODO: Abstract and decouple the idea of cumulative deltas
-        total_elo_deltas = defaultdict(lambda: 0)
         for match in matches:
-            elo_deltas = self.confirm(user_handle, match.id)
-            if elo_deltas:
-                for user_handle, elo_delta in elo_deltas.items():
-                    total_elo_deltas[user_handle] += elo_delta
+            elo_deltas = self.confirm(user_handle, match.id, verbose=False)
 
         self.talk_to(user_handle, 'Confirmed {} matches: {}!'.format(
             len(matches),
             ", ".join(map(lambda m: '#' + str(m.id), matches)),
         ))
-        for user_handle, elo_delta in total_elo_deltas.items():
-            self.talk_to(user_handle, f'Your new ELO is {self.rankees[user_handle].rating} ({show(elo_delta)}).')
+        self.flush_elo_cache()
 
     def confirm(self, user_handle, match_id, *, verbose=False):
         """
@@ -252,18 +206,19 @@ class EloBot:
             self.talk_to(user_handle, f'Confirmed match #{match_id}!')
 
         if not match.pending:
-            return self.apply_match(match, verbose=verbose)
+            observe_match(match)
+            if verbose:
+                self.flush_elo_cache()
 
     def print_leaderboard(self):
         table = []
 
-        # TODO: Eager so will get slow with many players.
-        for user_handle, rankee in sorted(self.rankees.items(), key=lambda p: p[1].rating, reverse=True):
-            print(user_handle, rankee)
+        # TODO: Inefficient
+        for user_handle in set(map(lambda p: p.handle, Player.select())):
             win_streak = self.get_win_streak(user_handle)
             streak_text = '(won {} in a row)'.format(win_streak) if win_streak >= self.min_streak_len else '-'
             name = self.slack_client.get_name(user_handle)
-            table.append([name, rankee.rating, rankee.wins, rankee.losses, streak_text])
+            table.append([name, get_elo(user_handle), get_wins(user_handle), get_losses(user_handle), streak_text])
 
         self.talk('```' + tabulate(table, headers=['Name', 'ELO', 'Wins', 'Losses', 'Streak']) + '```')
 
@@ -286,18 +241,6 @@ class EloBot:
 
         self.talk('```' + tabulate(table, headers=['Match', 'Needs to Confirm', 'Winning team', 'Losing team', 'Score', 'Date']) + '```')
 
-    # TODO: This method is misplaced
-    # Also, it should probably just be an attribute of Rankee
-    def get_win_streak(self, player_handle):
-        win_streak = 0
-        matches = (Match.select()
-            .where(Match.pending == False)
-            .join(Player)
-            .where(Player.handle == player_handle,
-                   Player.won == True)
-            .order_by(Match.datetime.desc()))
-        return len(list(matches))
-
 if __name__ == '__main__':
     with open('config.json') as config_data:
         config = json.load(config_data)
@@ -309,6 +252,7 @@ if __name__ == '__main__':
     slack_client = SlackClient(config['slack_token'])
     db.connect()
     create_tables()
+    rankees_init()
     EloBot(
         slack_client,
         slack_client.get_channel_id(config['channel']),
