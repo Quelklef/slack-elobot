@@ -1,3 +1,4 @@
+import traceback
 import time
 import json
 import re
@@ -13,19 +14,12 @@ from peewee import *
 from models import *
 from util import mean, show
 from patterns import *
-from rankee import get_elo, get_wins, get_losses, observe_match, rankees_init
+from rankee import *
 
 from_zone = tz.gettz('UTC')
 to_zone = tz.gettz('America/Los_Angeles')
 
 class SlackClient(SlackClient):
-    def __init__(self, *args, **kwargs):
-        self.last_ping = 0
-        super().__init__(*args, **kwargs)
-
-    def is_bot(self, user_handle):
-        return self.api_call('users.info', user=user_handle)['user']['is_bot']
-
     def get_name(self, user_handle):
         return self.api_call('users.info', user=user_handle)['user']['profile']['display_name_normalized']
 
@@ -36,26 +30,7 @@ class SlackClient(SlackClient):
             if channel['name'] == channel_name:
                 return channel['id']
 
-        print('Unable to find channel: ' + channel_name)
-        quit()
-
-    def ensure_connected(self):
-        sleeptime = 0.1
-        while not self.server.connected:
-            print('Was disconnected, attemping to reconnect...')
-            try:
-                self.rtm_connect()
-            except:  # TODO: Except what
-                pass
-            time.sleep(sleeptime)
-            sleeptime = min(30, sleeptime * 2)  # Exponential back off with a max wait of 30s
-
-    def heartbeat(self):
-        """Send a heartbeat if necessary"""
-        now = int(time.time())
-        if now > self.last_ping + 3:
-            self.server.ping()
-            self.last_ping = now
+        raise ValueError(f'No channel "{channel_name}"')
 
 
 class EloBot:
@@ -69,7 +44,6 @@ class EloBot:
         self.elo_cache = defaultdict(int)
 
         self.flush_elo_cache(verbose=False)
-        self.run()
 
     def flush_elo_cache(self, *, verbose=True):
         """Update stored elo_cache. If verbose, tell everyone their ELO change since last flush."""
@@ -96,14 +70,12 @@ class EloBot:
             self.talk(f'<@{handle_s}>, {message}')
 
     def run(self):
+        self.slack_client.rtm_connect(auto_reconnect=True)
         while True:
             time.sleep(0.1)
-            self.slack_client.heartbeat()
-            self.slack_client.ensure_connected()
-
             messages = self.slack_client.rtm_read()
             for message in messages:
-                if 'user' in message and message.get('type', False) == 'message' and message.get('channel', False) == self.channel_id and message.get('text', False):
+                if 'user' in message and 'text' in message and message.get('type') == 'message' and message.get('channel') == self.channel_id:
                     self.handle_message(message)
 
     def handle_message(self, message):
@@ -142,7 +114,7 @@ class EloBot:
         """Get a match or say an error and return None"""
         try:
             return Match.select(Match).where(Match.id == match_id).get()
-        except Exception:  #TODO
+        except DoesNotExist:
             self.talk(f'No match #{match_id}!')
 
     def game(self, user_handle, winner_handles, loser_handles, winners_score, losers_score):
@@ -179,10 +151,6 @@ class EloBot:
         self.flush_elo_cache()
 
     def confirm(self, user_handle, match_id, *, verbose=False):
-        """
-        If the match is not applied, return None.
-        If the match is applied, return a defaultdict mapping user handles to elo deltas.
-        """
         match = self.get_match(match_id)
         if not match: return
 
@@ -215,7 +183,7 @@ class EloBot:
 
         # TODO: Inefficient
         for user_handle in set(map(lambda p: p.handle, Player.select())):
-            win_streak = self.get_win_streak(user_handle)
+            win_streak = get_streak(user_handle)
             streak_text = '(won {} in a row)'.format(win_streak) if win_streak >= self.min_streak_len else '-'
             name = self.slack_client.get_name(user_handle)
             table.append([name, get_elo(user_handle), get_wins(user_handle), get_losses(user_handle), streak_text])
@@ -251,9 +219,19 @@ if __name__ == '__main__':
     db.connect()
     create_tables()
     rankees_init()
-    EloBot(
+
+    bot = EloBot(
         slack_client,
         slack_client.get_channel_id(config['channel']),
         config['bot_name'],
         config['min_streak_length'],
     )
+
+    while True:
+        try:
+            bot.run()
+        except KeyboardInterrupt:
+            break
+        except:
+            print(traceback.format_exc())
+            bot.talk("I have encountered an error. Please end my misery :knife:")

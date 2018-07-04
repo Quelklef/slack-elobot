@@ -1,4 +1,3 @@
-
 def mean(xs):
     """Mean of an iterable"""
     sum = 0
@@ -12,4 +11,3 @@ def show(n):
     if n >= 0:
         return "+" + str(n)
     return str(n)
-
