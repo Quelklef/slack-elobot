@@ -10,95 +10,18 @@ from dateutil import tz
 from collections import defaultdict
 
 from models import *
-
-def mean(xs):
-    """Mean of an iterable"""
-    sum = 0
-    count = 0
-    for x in xs:
-        sum += x
-        count += 1
-    return sum / count
-
-def show(n):
-    if n >= 0:
-        return "+" + str(n)
-    return str(n)
-
-# Regexes are suffixed with -REGEX or -REGEX_G.
-# -REGEX regexes don't contain capture groups, and
-# -REGEX_G regexes do.
-
-# re.compile is not used because it will not make much of a performance
-# difference with this few regexes, and because keeping all regexes as
-# strings allows for easy composition via string manipulation.
-
-HANDLE_REGEX   = '<@[A-z0-9]*>'
-HANDLE_REGEX_G = '<@([A-z0-9]*)>'
-
-# We allow for an optional backdoor that allows any user to run any command
-# Good for debugging
-# Default to false; we later pull a value for it from the config.
-BACKDOOR_ENABLED = False
-BACKDOOR_REGEX_G    = f'As {HANDLE_REGEX_G}:? (.*)'
-
-BEAT_TERMS = '''crushed
-rekt
-beat
-whooped
-destroyed
-smashed
-demolished
-decapitated
-smothered
-creamed'''.split('\n')
-BEAT_REGEX = f'(?:{"|".join(BEAT_TERMS)})'
-
-# TODO: globally, search() -> match()
-
-PLAYER_REGEX   = f'(?:I|me|{HANDLE_REGEX})'
-PLAYER_REGEX_G = f'(I|me|{HANDLE_REGEX})'
-ME_REGEX       = f'(?:I|me)'
-TEAM_REGEX_G   = f'({PLAYER_REGEX}(?:,? (?:and )?{PLAYER_REGEX})*)'  # Captures the entire team
-GAME_REGEX_G   = f'{TEAM_REGEX_G} {BEAT_REGEX} {TEAM_REGEX_G} (\d+) ?- ?(\d+)'
-
-def parse_team(team_text, me_handle):
-    m = re.match(TEAM_REGEX_G, team_text, re.IGNORECASE)
-    if not m:
-        raise ValueError("Given text must match TEAM_REGEX_G")
-    team_text, = m.groups()
-    team = re.findall(PLAYER_REGEX_G, team_text, re.IGNORECASE)
-
-    result = []
-    for player in team:
-        if re.match(ME_REGEX, player, re.IGNORECASE):
-            result.append(me_handle)
-        else:
-            result.append(re.match(HANDLE_REGEX_G, player, re.IGNORECASE).groups()[0])
-    return result
-
-def parse_game(game_text, me_handle):
-    m = re.match(GAME_REGEX_G, game_text, re.IGNORECASE)
-    if not m:
-        raise ValueError("Given text must match GAME_REGEX_G")
-    team1_text, team2_text, team1_score, team2_score = m.groups()
-    return (
-        parse_team(team1_text, me_handle),
-        parse_team(team2_text, me_handle),
-        int(team1_score),
-        int(team2_score),
-    )
-
-CONFIRM_REGEX_G   = 'Confirm (\d+)'
-CONFIRM_ALL_REGEX = 'Confirm all'
-# TODO: Deletion
-LEADERBOARD_REGEX = 'Print leaderboard'
-UNCONFIRMED_REGEX = 'Print unconfirmed'
+from util import mean, show
+from elo import rank_game
+from patterns import *
 
 from_zone = tz.gettz('UTC')
 to_zone = tz.gettz('America/Los_Angeles')
 
 class SlackClient(SlackClient):
+    def __init__(self, *args, **kwargs):
+        self.last_ping = 0
+        super().__init__(*args, **kwargs)
+
     def is_bot(self, user_handle):
         return self.api_call('users.info', user=user_handle)['user']['is_bot']
 
@@ -115,29 +38,23 @@ class SlackClient(SlackClient):
         print('Unable to find channel: ' + channel_name)
         quit()
 
-def k_factor(elo):
-    if elo > 2400:
-        return 16
-    elif elo < 2100:
-        return 32
-    return 24
+    def ensure_connected(self):
+        sleeptime = 0.1
+        while not self.server.connected:
+            print('Was disconnected, attemping to reconnect...')
+            try:
+                self.rtm_connect()
+            except:  # TODO: Except what
+                pass
+            time.sleep(sleeptime)
+            sleeptime = min(30, sleeptime * 2)  # Exponential back off with a max wait of 30s
 
-def rank_game(winner_elo, loser_elo):
-    """
-    Rank a game between two players.
-    Return the elo delta.
-    """
-    # From https://metinmediamath.wordpress.com/2013/11/27/how-to-calculate-the-elo-elo-including-example/
-    winner_transformed_elo = 10 ** (winner_elo / 400.0)
-    loser_transformed_elo  = 10 ** (loser_elo  / 400.0)
-
-    winner_expected_score = winner_transformed_elo / (winner_transformed_elo + loser_transformed_elo)
-    loser_expected_score  = loser_transformed_elo  / (winner_transformed_elo + loser_transformed_elo)
-
-    winner_elo_delta = k_factor(winner_elo) * (1 - winner_expected_score)
-    loser_elo_delta  = k_factor(loser_elo)  * (0 - loser_expected_score)
-
-    return winner_elo_delta, loser_elo_delta
+    def heartbeat(self):
+        """Send a heartbeat if necessary"""
+        now = int(time.time())
+        if now > self.last_ping + 3:
+            self.server.ping()
+            self.last_ping = now
 
 class EloBot:
     rankees = defaultdict(Rankee)  # TODO: Feels wrong
@@ -148,10 +65,7 @@ class EloBot:
         self.min_streak_len = min_streak_len
         self.channel_id = channel_id
 
-        self.last_ping = 0
-
         self.init_rankees()
-        self.ensure_connected()
         self.run()
 
     def apply_match(self, match: Match, *, verbose=False):  # TODO: Global verbosity
@@ -159,7 +73,7 @@ class EloBot:
         Apply a match, updating all player's ELOs.
         Return a defaultdict mapping user handle to ELO delta.
         """
-        # TODO: handle inequal team sizes?
+        # TODO: handle unequal team sizes?
         avg_winner = mean(map(lambda r: self.rankees[r.handle].rating, match.winners))
         avg_loser  = mean(map(lambda r: self.rankees[r.handle].rating, match.losers))
         total_deltas = defaultdict(float)
@@ -186,25 +100,6 @@ class EloBot:
             if not match.pending:
                 self.apply_match(match)
 
-    # TODO: connection-related methods should be moved to another class
-    def ensure_connected(self):
-        sleeptime = 0.1
-        while not self.slack_client.server.connected:
-            print('Was disconnected, attemping to reconnect...')
-            try:
-                self.slack_client.rtm_connect()
-            except:  # TODO: Except what
-                pass
-            time.sleep(sleeptime)
-            sleeptime = min(30, sleeptime * 2)  # Exponential back off with a max wait of 30s
-
-    def heartbeat(self):
-        """Send a heartbeat if necessary"""
-        now = int(time.time())
-        if now > self.last_ping + 3:
-            self.slack_client.server.ping()
-            self.last_ping = now
-
     def talk(self, message):
         """Send a message to the Slack channel"""
         self.slack_client.api_call('chat.postMessage', channel=self.channel_id, text=message, username=self.name)
@@ -213,7 +108,7 @@ class EloBot:
         """Accepts a single handle or a list of handles."""
         message = message[0].lower() + message[1:]
 
-        if isinstance(handle_s, list):
+        if isinstance(handle_s, list) or isinstance(handle_s, set):
             self.talk(' '.join(f'<@{handle}>' for handle in set(handle_s)) + ', ' + message)
         else:
             self.talk(f'<@{handle_s}>, {message}')
@@ -221,8 +116,8 @@ class EloBot:
     def run(self):
         while True:
             time.sleep(0.1)
-            self.heartbeat()
-            self.ensure_connected()
+            self.slack_client.heartbeat()
+            self.slack_client.ensure_connected()
 
             messages = self.slack_client.rtm_read()
             for message in messages:
@@ -230,13 +125,11 @@ class EloBot:
                     self.handle_message(message)
 
     def handle_message(self, message):
-        print(f'Message received:\n{message}')
-
         text = message['text']
         user_handle = message['user']
 
         if BACKDOOR_ENABLED and re.match(BACKDOOR_REGEX_G, text, re.IGNORECASE):
-            new_user_handle, new_text = re.search(BACKDOOR_REGEX_G, text, re.IGNORECASE).groups()
+            new_user_handle, new_text = re.match(BACKDOOR_REGEX_G, text, re.IGNORECASE).groups()
             return self.handle_message({
                 'user': new_user_handle,
                 'text': new_text
@@ -252,9 +145,9 @@ class EloBot:
                     self.talk_to(handle, 'Hey! You can\'t be in this game more than once!')
                     return
 
-            self.game(winner_handles, loser_handles, winner_score, loser_score)
+            self.game(user_handle, winner_handles, loser_handles, winner_score, loser_score)
         elif re.match(CONFIRM_REGEX_G, text, re.IGNORECASE):
-            match_id, = re.search(CONFIRM_REGEX_G, text, re.IGNORECASE).groups()
+            match_id, = re.match(CONFIRM_REGEX_G, text, re.IGNORECASE).groups()
             self.confirm(user_handle, match_id, verbose=True)
         elif re.match(CONFIRM_ALL_REGEX, text, re.IGNORECASE):
             self.confirm_all(user_handle)
@@ -280,8 +173,7 @@ class EloBot:
             return None
         return match
 
-    def game(self, winner_handles, loser_handles, winners_score, losers_score):
-        # TODO: Automatically confirm for the reporter
+    def game(self, user_handle, winner_handles, loser_handles, winners_score, losers_score):
         match = Match.create(
             winners_score=winners_score,
             losers_score=losers_score,
@@ -300,8 +192,9 @@ class EloBot:
                 won=False,
             )
 
+        self.confirm(user_handle, match.id)
         self.talk_to(
-            winner_handles + loser_handles,
+            (set(winner_handles) | set(loser_handles)) - {user_handle},
             f'Type "Confirm {match.id}" to confirm the above match, or ignore it if it\'s incorrect.',
         )
 
