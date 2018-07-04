@@ -30,9 +30,9 @@ python3 elobot.py
 
 When a game finished, you can tell the bot along the lines of:
 
-> I beat @sam 22-0
-
 > @sam and @norm crushed me and @max 14 - 2
+
+> I played @sam 22-0, 13-4, and 15-6
 
 > @sam, @marsha, @dave, and me beat @hamlet, @romeo, and @juliet 4-20
 
@@ -42,9 +42,13 @@ It will then ask all users to confirm the match.
 
 To confirm a match you are in, type
 
-> confirm {match_id}.
+> confirm {match_id}
 
-Alternatively, you can confirm all pending matches with:
+Alternatively, you can confirm a range of matches with:
+
+> confirm #4-10
+
+or all matches with:
 
 > confirm all
 

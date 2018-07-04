@@ -12,7 +12,7 @@ from tabulate import tabulate
 from peewee import *
 
 from models import *
-from util import mean, show
+from util import mean, show, colloq_listify, colloq_rangify
 from patterns import *
 from rankee import *
 
@@ -54,7 +54,9 @@ class EloBot:
             new_elo = get_elo(handle)
             self.elo_cache[handle] = new_elo
             if verbose:
-                self.talk_to(handle, f'Your ELO is {new_elo} ({show(new_elo - old_elo)})')
+                elo_delta = new_elo - old_elo
+                if elo_delta != 0:
+                    self.talk_to(handle, f'Your ELO is {new_elo} ({show(elo_delta)})')
 
     def talk(self, message):
         """Send a message to the Slack channel"""
@@ -65,7 +67,7 @@ class EloBot:
         message = message[0].lower() + message[1:]
 
         if isinstance(handle_s, list) or isinstance(handle_s, set):
-            self.talk(', '.join(f'<@{handle}>' for handle in set(handle_s)) + ': ' + message)
+            self.talk(colloq_listify(f'<@{handle}>' for handle in set(handle_s)) + ': ' + message)
         else:
             self.talk(f'<@{handle_s}>, {message}')
 
@@ -90,7 +92,7 @@ class EloBot:
             })
 
         if re.match(GAME_REGEX_G, text, re.IGNORECASE):
-            winner_handles, loser_handles, winner_score, loser_score = parse_game(text, user_handle)
+            winner_handles, loser_handles, scores = parse_game(text, user_handle)
 
             # Ensure that no player is in the game more than once
             # This is only a porcelain restriction; the code otherwise allows repeat players
@@ -99,10 +101,13 @@ class EloBot:
                     self.talk_to(handle, 'Hey! You can\'t be in this game more than once!')
                     return
 
-            self.game(user_handle, winner_handles, loser_handles, winner_score, loser_score)
+            self.games(user_handle, winner_handles, loser_handles, scores)
         elif re.match(CONFIRM_REGEX_G, text, re.IGNORECASE):
             match_id, = re.match(CONFIRM_REGEX_G, text, re.IGNORECASE).groups()
             self.confirm(user_handle, match_id, verbose=True)
+        elif re.match(CONFIRM_RANGE_REGEX_G, text, re.IGNORECASE):
+            lower, upper = re.match(CONFIRM_RANGE_REGEX_G, text, re.IGNORECASE).groups()
+            self.confirm_many(user_handle, lower, upper)
         elif re.match(CONFIRM_ALL_REGEX, text, re.IGNORECASE):
             self.confirm_all(user_handle)
         elif re.match(LEADERBOARD_REGEX, text, re.IGNORECASE):
@@ -117,18 +122,21 @@ class EloBot:
         except DoesNotExist:
             self.talk(f'No match #{match_id}!')
 
-    def game(self, user_handle, winner_handles, loser_handles, winners_score, losers_score):
-        match = Match.create(winners_score=winners_score, losers_score=losers_score)
-        for winner_handle in winner_handles:
-            Player.create(handle=winner_handle, match=match, won=True)
-        for loser_handle in loser_handles:
-            Player.create(handle=loser_handle, match=match, won=False)
+    def games(self, user_handle, winner_handles, loser_handles, scores):
+        match = None  # We leak this variable from the loop
+        for winners_score, losers_score in scores:
+            match = Match.create(winners_score=winners_score, losers_score=losers_score)
+            for winner_handle in winner_handles:
+                Player.create(handle=winner_handle, match=match, won=True)
+            for loser_handle in loser_handles:
+                Player.create(handle=loser_handle, match=match, won=False)
+            self.confirm(user_handle, match.id)
 
-        self.confirm(user_handle, match.id)
-        self.talk_to(
-            (set(winner_handles) | set(loser_handles)) - {user_handle},
-            f'Type "Confirm {match.id}" to confirm the above match, or ignore it if it\'s incorrect.',
-        )
+        if len(scores) == 1:
+            msg = f'Please confirm match #{match.id}.'
+        else:
+            msg = f'Matches #{match.id - len(scores) + 1}-{match.id} need confirmation.'
+        self.talk_to((set(winner_handles) | set(loser_handles)) - {user_handle}, msg)
 
     def confirm_all(self, user_handle):
         matches = (Match.select()
@@ -144,27 +152,43 @@ class EloBot:
         for match in matches:
             elo_deltas = self.confirm(user_handle, match.id, verbose=False)
 
-        self.talk_to(user_handle, 'Confirmed {} matches: {}!'.format(
-            len(matches),
-            ", ".join(map(lambda m: '#' + str(m.id), matches)),
-        ))
+        if len(matches) == 1:
+            self.talk_to(user_handle, f'Confirmed match #{matches[0].id}')
+        else:
+            self.talk_to(user_handle, f'Confirmed {len(matches)} matches: {colloq_rangify(matches)}!')
+        self.flush_elo_cache()
+
+    def confirm_many(self, user_handle, lower, upper):
+        actually_confirmed = []
+        for match_id in range(int(lower), int(upper) + 1):
+            if self.confirm(user_handle, match_id):
+                actually_confirmed.append(match_id)
+
+        if len(actually_confirmed) == 0:
+            self.talk_to(user_handle, 'No given matches needed confirmation.')
+        elif len(actually_confirmed) == 1:
+            self.talk_to(user_handle, f'Confirmted match #{actually_confirmed[0]}')
+        else:
+            self.talk_to(user_handle, f'Confirmed matches {colloq_rangify(actually_confirmed)}.')
+
         self.flush_elo_cache()
 
     def confirm(self, user_handle, match_id, *, verbose=False):
+        """Return whether a match was confirmed or not."""
         match = self.get_match(match_id)
-        if not match: return
+        if not match: return False
 
         players = Player.select().where(Player.handle == user_handle, Player.match == match_id)
 
         if not players:
             if verbose:
                 self.talk_to(user_handle, f'Cannot confirm match #{match_id}! You\'re not in it!')
-            return
+            return False
 
         if not any(map(lambda p: p.pending, players)):
             if verbose:
                 self.talk_to(user_handle, f'You have already confirmed match #{match_id}!')
-            return
+            return False
 
         (Player.update(pending = False)
             .where(Player.handle == user_handle, Player.match == match_id)
@@ -177,6 +201,7 @@ class EloBot:
             observe_match(match)
             if verbose:
                 self.flush_elo_cache()
+        return True
 
     def print_leaderboard(self):
         table = []
@@ -184,7 +209,7 @@ class EloBot:
         # TODO: Inefficient
         for user_handle in set(map(lambda p: p.handle, Player.select())):
             win_streak = get_streak(user_handle)
-            streak_text = '(won {} in a row)'.format(win_streak) if win_streak >= self.min_streak_len else '-'
+            streak_text = 'Won {} in a row'.format(win_streak) if win_streak >= self.min_streak_len else '-'
             name = self.slack_client.get_name(user_handle)
             table.append([name, get_elo(user_handle), get_wins(user_handle), get_losses(user_handle), streak_text])
 
