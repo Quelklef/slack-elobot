@@ -2,5 +2,6 @@
     "slack_token": "xxx",
     "channel": "general",
     "bot_name": "ELO Master",
-    "min_streak_length": 3
+    "min_streak_length": 3,
+    "debug": false
 }

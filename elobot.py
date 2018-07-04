@@ -15,6 +15,7 @@ HANDLE_RE = '<@([A-z0-9]*)>'
 
 # We allow for an optional backdoor that allows any user to run any command
 # Good for debugging
+# Default to false; we later pull a value for it from the config.
 BACKDOOR_ENABLED = False
 BACKDOOR_REGEX = re.compile(f'As {HANDLE_RE}:? (.*)', re.IGNORECASE)
 
@@ -286,6 +287,9 @@ class EloBot(object):
 if __name__ == '__main__':
     with open('config.json') as config_data:
         config = json.load(config_data)
+
+    if config.get('debug', False):
+        BACKDOOR_ENABLED = True
 
     slack_client = SlackClient(config['slack_token'])
     db.connect()
