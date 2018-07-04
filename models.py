@@ -3,38 +3,53 @@ from playhouse.sqlite_ext import SqliteExtDatabase
 
 db = SqliteExtDatabase('elo.db', pragmas=(('foreign_keys', True),))
 
+needs_table_li = []
+def needs_table(x):
+    needs_table_li.append(x)
+    return x
+def create_tables():
+    for nt in needs_table_li:
+        nt.create_table()
+
+
 class BaseModel(Model):
     class Meta:
         database = db
 
-class Player():
-    """ Player is an *in memory only* object that is built up by replaying the match history """
 
+class Rankee():
+    """Rankee is an *in memory only* object that is built up by replaying the match history."""
     def __init__(self):
         self.wins = 0
         self.losses = 0
         self.rating = 1500
 
-    @property
-    def k_factor(self):
-        if self.rating > 2400:
-            return 16
-        elif self.rating < 2100:
-            return 32
-        return 24
 
-    def __str__(self):
-        return '<Player {} {} {}>'.format(self.wins, self.losses, self.rating)
-
+@needs_table
 class Match(BaseModel):
-    winner_handle = CharField()
-    winner_score  = IntegerField(default=0)
-    loser_handle  = CharField()
-    loser_score   = IntegerField(default=0)
-    pending       = BooleanField(default=True)
-    played        = DateTimeField(constraints=[SQL('DEFAULT CURRENT_TIMESTAMP')])
+    winners_score = IntegerField()
+    losers_score  = IntegerField()
+    datetime      = DateTimeField(constraints=[SQL('DEFAULT CURRENT_TIMESTAMP')])
 
-    def save(self, *args, **kwargs):
-        if self.winner_handle != self.loser_handle:
-            return super(Match, self).save(*args, **kwargs)
-        raise IntegrityError('Winner cannot be the same as loser')
+    @property
+    def pending(self):
+        """Is at least one participant pending?"""
+        return any(map(lambda p: p.pending, self.players))
+
+    @property
+    def losers(self):
+        return set(filter(lambda p: not p.won, self.players))
+
+    @property
+    def winners(self):
+        return set(filter(lambda p: p.won, self.players))
+
+
+@needs_table
+class Player(BaseModel):
+    """Represents a player in a single match."""
+    match   = ForeignKeyField(Match, related_name='players')
+    won     = BooleanField()
+    handle  = CharField()
+    pending = BooleanField(default=True)
+

@@ -4,34 +4,62 @@ A basic ELO bot for Slack. Can be used to keep track of the best table tennis or
 
 ## Installation
 
+(With virtual environments)
+
 ```
-git clone git@github.com:mburst/slack-elobot.git
-pip install -r requirements.txt
+git clone https://github.com/<>/slack-elobot
+cd slack-elobot
+mkdir pyvenv
+python3 -m venv pyvenv
+source pyvenv/bin/activate
+pip install pipenv
+pipenv install
 mv sampleconfig.json config.json
 ```
 
 Then edit the token value in config.json to match the one acquired from https://api.slack.com/web#authentication
 
 ```
-python elobot.py
+source pyvenv/bin/activate
+python3 elobot.py
 ```
-
-Tested on Python 2.7 and 3.x.
 
 ## How to use
 
-### Sign up
+### Declare a Game
 
-To signup just type "Sign me up" in the channel specified in the config.json file.
+When a game finished, you can tell the bot along the lines of:
 
-### Declare a winner
+> I beat @sam 22-0
 
-If you have beaten someone in a game type "I crushed @username x-y" where x and y are the score as integers. The bot will then ask the loser to confirm the match.
+> @sam and @norm crushed me and @max 14 - 2
 
-### Confirm a match
+> @sam, @marsha, @dave, and me beat @hamlet, @romeo, and @juliet 4-20
 
-To confirm you have lost a match type "Confirm match_id". match_id will be announced by the bot once it is created.
+It will then ask all users to confirm the match.
 
-### Print leaderboard
+### Confirm a Match
 
-Type "Print leaderboard" in order to see the top 10 players.
+To confirm a match you are in, type
+
+> confirm {match_id}.
+
+Alternatively, you can confirm all pending matches with:
+
+> confirm all
+
+### See Leaderboard
+
+Type
+
+> print leaderboard
+
+to see the top 10 players.
+
+### Seet Pending Matches
+
+Type
+
+> print unconfirmed
+
+to see pending matches.
