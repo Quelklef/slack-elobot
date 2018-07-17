@@ -27,7 +27,6 @@ demolished
 decapitated
 smothered
 creamed
-loss to
 tied
 played'''.split('\n')
 PLAYED_REGEX = f'(?:{"|".join(PLAYED_TERMS)})'
