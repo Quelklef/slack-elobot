@@ -1,4 +1,3 @@
-import traceback
 import time
 import json
 import re
@@ -258,5 +257,6 @@ if __name__ == '__main__':
         except KeyboardInterrupt:
             break
         except:
+            import traceback
             print(traceback.format_exc())
             bot.talk("I have encountered an error. Please end my misery :knife:")
