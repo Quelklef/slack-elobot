@@ -40,9 +40,8 @@ class EloBot:
         self.channel_id = channel_id
 
         # TODO: Should map from Player to int. Handles should be dealt with as little as possible
-        # TODO: Fix cache bug
         # Map from handle to elo_cache
-        self.elo_cache = defaultdict(int)
+        self.elo_cache = defaultdict(lambda: 1500)  # Default ELO is 1500
 
         self.flush_elo_cache(verbose=False)
 
