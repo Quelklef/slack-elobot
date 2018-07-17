@@ -4,24 +4,19 @@ A basic ELO bot for Slack. Can be used to keep track of the best table tennis or
 
 ## Installation
 
-(With virtual environments)
+This project uses [pipenv](https://docs.pipenv.org/)
 
 ```
-git clone https://github.com/<>/slack-elobot
+git clone https://github.com/samm81/slack-elobot
 cd slack-elobot
-mkdir pyvenv
-python3 -m venv pyvenv
-source pyvenv/bin/activate
-pip install pipenv
+cp sampleconfig.json config.json
 pipenv install
-mv sampleconfig.json config.json
 ```
 
-Then edit the token value in config.json to match the one acquired from https://api.slack.com/web#authentication
+Then edit the token value in config.json to match the one acquired from https://api.slack.com/web#authentication, and:
 
 ```
-source pyvenv/bin/activate
-python3 elobot.py
+pipenv run python3 elobot.py
 ```
 
 ## How to use
