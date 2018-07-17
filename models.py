@@ -1,6 +1,8 @@
 from peewee import *
 from playhouse.sqlite_ext import SqliteExtDatabase
 
+from cumulative import cumulatives
+
 db = SqliteExtDatabase('elo.db', pragmas=(('foreign_keys', True),))
 
 needs_table_li = []
@@ -44,3 +46,20 @@ class Player(BaseModel):
     won     = BooleanField()
     handle  = CharField()
     pending = BooleanField(default=True)
+
+    @property
+    def elo(self):
+        return cumulatives[self.handle].elo
+
+    @property
+    def wins(self):
+        return cumulatives[self.handle].wins
+
+    @property
+    def losses(self):
+        return cumulatives[self.handle].losses
+
+    @property
+    def streak(self):
+        return cumulatives[self.handle].streak
+

@@ -5,7 +5,6 @@ import itertools as it
 from datetime import datetime
 from dateutil import tz
 from collections import defaultdict
-from statistics import show
 
 from slackclient import SlackClient
 from tabulate import tabulate
@@ -14,7 +13,7 @@ from peewee import *
 from models import *
 from util import colloq_listify, colloq_rangify
 from patterns import *
-from rankee import *
+from cumulative import observe_match
 
 from_zone = tz.gettz('UTC')
 to_zone = tz.gettz('America/Los_Angeles')
@@ -40,6 +39,8 @@ class EloBot:
         self.min_streak_len = min_streak_len
         self.channel_id = channel_id
 
+        # TODO: Should map from Player to int. Handles should be dealt with as little as possible
+        # TODO: Fix cache bug
         # Map from handle to elo_cache
         self.elo_cache = defaultdict(int)
 
@@ -47,16 +48,13 @@ class EloBot:
 
     def flush_elo_cache(self, *, verbose=True):
         """Update stored elo_cache. If verbose, tell everyone their ELO change since last flush."""
-        # TODO: Inefficient, just as the other one
-        handles = set(map(lambda p: p.handle, Player.select()))
-        for handle in handles:
-            old_elo = self.elo_cache[handle]
-            new_elo = get_elo(handle)
-            self.elo_cache[handle] = new_elo
+        for player in Player.select():
+            old_elo = self.elo_cache[player.handle]
+            self.elo_cache[player.handle] = player.elo
             if verbose:
-                elo_delta = new_elo - old_elo
+                elo_delta = player.elo - old_elo
                 if elo_delta != 0:
-                    self.talk_to(handle, f'Your ELO is {new_elo} ({elo_delta:+})')
+                    self.talk_to(player.handle, f'Your ELO is {player.elo} ({elo_delta:+})')
 
     def talk(self, message):
         """Send a message to the Slack channel"""
@@ -207,11 +205,11 @@ class EloBot:
         table = []
 
         # TODO: Inefficient
-        for user_handle in set(map(lambda p: p.handle, Player.select())):
-            win_streak = get_streak(user_handle)
+        for player in Player.select():
+            win_streak = player.streak
             streak_text = 'Won {} in a row'.format(win_streak) if win_streak >= self.min_streak_len else '-'
-            name = self.slack_client.get_name(user_handle)
-            table.append([name, get_elo(user_handle), get_wins(user_handle), get_losses(user_handle), streak_text])
+            name = self.slack_client.get_name(player.handle)
+            table.append([name, player.elo, player.wins, player.losses, streak_text])
 
         self.talk('```' + tabulate(table, headers=['Name', 'ELO', 'Wins', 'Losses', 'Streak']) + '```')
 
@@ -243,7 +241,9 @@ if __name__ == '__main__':
     slack_client = SlackClient(config['slack_token'])
     db.connect()
     create_tables()
-    rankees_init()
+
+    for match in Match.select().where(Match.pending == False):
+        observe_match(match)
 
     bot = EloBot(
         slack_client,
