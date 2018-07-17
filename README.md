@@ -60,7 +60,7 @@ Type
 
 to see the top 10 players.
 
-### Seet Pending Matches
+### See Pending Matches
 
 Type
 

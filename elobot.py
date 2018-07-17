@@ -167,7 +167,7 @@ class EloBot:
         if len(actually_confirmed) == 0:
             self.talk_to(user_handle, 'No given matches needed confirmation.')
         elif len(actually_confirmed) == 1:
-            self.talk_to(user_handle, f'Confirmted match #{actually_confirmed[0]}')
+            self.talk_to(user_handle, f'Confirmed match #{actually_confirmed[0]}')
         else:
             self.talk_to(user_handle, f'Confirmed matches {colloq_rangify(actually_confirmed)}.')
 
