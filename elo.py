@@ -21,18 +21,18 @@ def rank_singles(winner_elo, loser_elo):
 
     return int(winner_elo_delta), int(loser_elo_delta)
 
-def rank_teams(winning_team, losing_team):
+def rank_teams(winning_team_elos, losing_team_elos):
     """Rank a team game. Return elo deltas."""
-    avg_winner = mean(winning_team)
-    avg_loser  = mean(losing_team)
+    avg_winner = mean(winning_team_elos)
+    avg_loser  = mean(losing_team_elos)
 
     winning_deltas = [
         rank_singles(winner, avg_loser)[0]
-        for winner in winning_team
+        for winner in winning_team_elos
     ]
     losing_deltas = [
         rank_singles(avg_winner, loser)[1]
-        for loser in losing_team
+        for loser in losing_team_elos
     ]
 
     return winning_deltas, losing_deltas
