@@ -17,18 +17,11 @@ HANDLE_REGEX_G = '<@([A-z0-9]*)>'
 BACKDOOR_ENABLED = False
 BACKDOOR_REGEX_G    = f'As {HANDLE_REGEX_G}:? (.*)'
 
-PLAYED_TERMS = '''crushed
-rekt
-beat
-whooped
-destroyed
-smashed
-demolished
-decapitated
-smothered
-creamed
-tied
-played'''.split('\n')
+PLAYED_TERMS = '''played
+fought
+battled
+dueled
+sparred'''.split('\n')
 PLAYED_REGEX = f'(?:{"|".join(PLAYED_TERMS)})'
 
 PLAYER_REGEX   = f'(?:I|me|{HANDLE_REGEX})'

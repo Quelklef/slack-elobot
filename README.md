@@ -25,11 +25,11 @@ pipenv run python3 elobot.py
 
 When a game finished, you can tell the bot along the lines of:
 
-> @sam and @norm crushed me and @max 14 - 2
+> @sam and @norm played me and @max 14 - 2
 
-> I played @sam 22-0, 13-4, and 15-6
+> I deuled @sam 22-0, 13-4, and 15-6
 
-> @sam, @marsha, @dave, and me beat @hamlet, @romeo, and @juliet 4-20
+> @sam, @marsha, @dave, and me sparred @hamlet, @romeo, and @juliet 4-20
 
 It will then ask all users to confirm the match.
 

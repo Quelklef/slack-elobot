@@ -89,16 +89,16 @@ class EloBot:
             })
 
         if re.match(GAME_REGEX_G, text, re.IGNORECASE):
-            winner_handles, loser_handles, scores = parse_game(text, user_handle)
+            team1_handles, team2_handles, scores = parse_game(text, user_handle)
 
             # Ensure that no player is in the game more than once
             # This is only a porcelain restriction; the code otherwise allows repeat players
-            for handle in winner_handles + loser_handles:
-                if (winner_handles + loser_handles).count(handle) > 1:
+            for handle in team1_handles + team2_handles:
+                if (team1_handles + team2_handles).count(handle) > 1:
                     self.talk_to(handle, 'Hey! You can\'t be in this game more than once!')
                     return
 
-            self.games(user_handle, winner_handles, loser_handles, scores)
+            self.games(user_handle, team1_handles, team2_handles, scores)
         elif re.match(CONFIRM_REGEX_G, text, re.IGNORECASE):
             match_id, = re.match(CONFIRM_REGEX_G, text, re.IGNORECASE).groups()
             self.confirm(user_handle, match_id, verbose=True)
@@ -119,10 +119,18 @@ class EloBot:
         except DoesNotExist:
             self.talk(f'No match #{match_id}!')
 
-    def games(self, user_handle, winner_handles, loser_handles, scores):
+    def games(self, user_handle, team1_handles, team2_handles, scores):
         match = None  # We leak this variable from the loop
-        for winners_score, losers_score in scores:
-            match = Match.create(winners_score=winners_score, losers_score=losers_score)
+        for score in scores:
+            team1_score, team2_score = score
+            if team1_score >= team2_score:
+                winner_handles = team1_handles
+                loser_handles = team2_handles
+            else:
+                winner_handles = team2_handles
+                loser_handles = team1_handles
+
+            match = Match.create(winners_score=max(score), losers_score=min(score))
             for winner_handle in winner_handles:
                 Player.create(handle=winner_handle, match=match, won=True)
             for loser_handle in loser_handles:
@@ -133,7 +141,7 @@ class EloBot:
             msg = f'Please confirm match #{match.id}.'
         else:
             msg = f'Matches #{match.id - len(scores) + 1}-{match.id} need confirmation.'
-        self.talk_to((set(winner_handles) | set(loser_handles)) - {user_handle}, msg)
+        self.talk_to((set(team1_handles) | set(team2_handles)) - {user_handle}, msg)
 
     def confirm_all(self, user_handle):
         matches = (Match.select()
