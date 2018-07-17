@@ -50,7 +50,7 @@ def parse_scores(score_text):
 
     result = []
     while scores:
-        result.append((scores.pop(0), scores.pop(0)))
+        result.append((int(scores.pop(0)), int(scores.pop(0))))
     return result
 
 def parse_game(game_text, me_handle):
