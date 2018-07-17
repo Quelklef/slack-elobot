@@ -53,7 +53,7 @@ Type
 
 > print leaderboard
 
-to see the top 10 players.
+to see all players in descending rank.
 
 ### See Pending Matches
 

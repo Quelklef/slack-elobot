@@ -28,24 +28,29 @@ class Match(BaseModel):
     @property
     def pending(self):
         """Is at least one participant pending?"""
-        return any(map(lambda p: p.pending, self.players))
+        return any(map(lambda pa: pa.pending, self.participations))
 
     @property
     def losers(self):
-        return set(filter(lambda p: not p.won, self.players))
+        return (Player
+                .select()
+                .join(Participation)
+                .where(Participation.won == False,
+                       Participation.match == self))
 
     @property
     def winners(self):
-        return set(filter(lambda p: p.won, self.players))
+        return (Player
+                .select()
+                .join(Participation)
+                .where(Participation.won == True,
+                       Participation.match == self))
 
 
 @needs_table
 class Player(BaseModel):
-    """Represents a player in a single match."""
-    match   = ForeignKeyField(Match, related_name='players')
-    won     = BooleanField()
-    handle  = CharField()
-    pending = BooleanField(default=True)
+    """Represents a single person who has played multiple games"""
+    handle = CharField()
 
     @property
     def elo(self):
@@ -63,3 +68,11 @@ class Player(BaseModel):
     def streak(self):
         return cumulatives[self.handle].streak
 
+
+@needs_table
+class Participation(BaseModel):
+    """Represents one player participating in one match"""
+    player  = ForeignKeyField(Player, related_name='participations')
+    match   = ForeignKeyField(Match, related_name='participations')
+    won     = BooleanField()
+    pending = BooleanField(default=True)

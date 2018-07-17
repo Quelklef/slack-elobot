@@ -22,19 +22,17 @@ cumulatives = defaultdict(PlayerCumulative)
 
 def observe_match(match):
     # Create these variables because I'm not sure if match.winners and match.losers are ordered by default
-    winners = list(match.winners)
-    losers  = list(match.losers)
     winning_deltas, losing_deltas = rank_teams(
-        list(map(lambda w: w.elo, winners)),
-        list(map(lambda l: l.elo, losers)),
+        list(map(lambda w: w.elo, match.winners)),
+        list(map(lambda l: l.elo, match.losers)),
     )
 
-    for winner, winner_delta in zip(winners, winning_deltas):
+    for winner, winner_delta in zip(match.winners, winning_deltas):
         cumulative = cumulatives[winner.handle]
         cumulative.wins += 1
         cumulative.elo += winner_delta
         cumulative.streak += 1
-    for loser, loser_delta in zip(losers, losing_deltas):
+    for loser, loser_delta in zip(match.losers, losing_deltas):
         cumulative = cumulatives[loser.handle]
         cumulative.losses += 1
         cumulative.elo += loser_delta

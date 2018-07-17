@@ -132,9 +132,9 @@ class EloBot:
 
             match = Match.create(winners_score=max(score), losers_score=min(score))
             for winner_handle in winner_handles:
-                Player.create(handle=winner_handle, match=match, won=True)
+                Participation.create(player=Player.get_or_create(handle=winner_handle)[0], match=match, won=True)
             for loser_handle in loser_handles:
-                Player.create(handle=loser_handle, match=match, won=False)
+                Participation.create(player=Player.get_or_create(handle=loser_handle)[0], match=match, won=False)
             self.confirm(user_handle, match.id)
 
         if len(scores) == 1:
@@ -145,9 +145,9 @@ class EloBot:
 
     def confirm_all(self, user_handle):
         matches = (Match.select()
-                        .join(Player)
-                        .where(Player.handle == user_handle,
-                               Player.pending == True)
+                        .join(Participation)
+                        .where(Participation.player == Player.get(handle=user_handle),
+                               Participation.pending == True)
                         .order_by(Match.datetime.asc()))  # Order is significant
 
         if not matches:
@@ -160,7 +160,8 @@ class EloBot:
         if len(matches) == 1:
             self.talk_to(user_handle, f'Confirmed match #{matches[0].id}')
         else:
-            self.talk_to(user_handle, f'Confirmed {len(matches)} matches: {colloq_rangify(matches)}!')
+            match_ids = map(lambda m: m.id, matches)
+            self.talk_to(user_handle, f'Confirmed {len(matches)} matches: {colloq_rangify(match_ids)}!')
         self.flush_elo_cache()
 
     def confirm_many(self, user_handle, lower, upper):
@@ -183,20 +184,24 @@ class EloBot:
         match = self.get_match(match_id)
         if not match: return False
 
-        players = Player.select().where(Player.handle == user_handle, Player.match == match_id)
+        partics = (Participation
+                    .select()
+                    .where(Participation.player == Player.get(handle=user_handle),
+                           Participation.match == match))
 
-        if not players:
+        if not partics:
             if verbose:
                 self.talk_to(user_handle, f'Cannot confirm match #{match_id}! You\'re not in it!')
             return False
 
-        if not any(map(lambda p: p.pending, players)):
+        if not any(map(lambda p: p.pending, partics)):
             if verbose:
                 self.talk_to(user_handle, f'You have already confirmed match #{match_id}!')
             return False
 
-        (Player.update(pending = False)
-            .where(Player.handle == user_handle, Player.match == match_id)
+        (Participation.update(pending = False)
+            .where(Participation.player == Player.get(handle=user_handle),
+                   Participation.match == Match.get(id=match_id))
             .execute())
 
         if verbose:
@@ -211,10 +216,9 @@ class EloBot:
     def print_leaderboard(self):
         table = []
 
-        # TODO: Inefficient
-        for player in Player.select():
+        for player in sorted(Player.select(), key=lambda p: -p.elo):
             win_streak = player.streak
-            streak_text = 'Won {} in a row'.format(win_streak) if win_streak >= self.min_streak_len else '-'
+            streak_text = f'Won {win_streak} in a row' if win_streak >= self.min_streak_len else '-'
             name = self.slack_client.get_name(player.handle)
             table.append([name, player.elo, player.wins, player.losses, streak_text])
 
@@ -227,10 +231,23 @@ class EloBot:
         for match in it.islice(filter(lambda m: m.pending, Match.select().order_by(Match.datetime.desc())), 0, 25):
             match_datetime_utc = match.datetime.replace(tzinfo=from_zone)
             match_datetime_pst = match_datetime_utc.astimezone(to_zone)
+
+            def render_participation(pa):
+                prefix = '*' if pa.pending else ''
+                return prefix + self.slack_client.get_name(pa.player.handle)
+            def render_participations(pas):
+                return ' '.join(map(render_participation, pas))
+
             table.append([
                 match.id,
-                ' '.join(map(lambda p: self.slack_client.get_name(p.handle) + ('*' if p.pending else ''), match.winners)),
-                ' '.join(map(lambda p: self.slack_client.get_name(p.handle) + ('*' if p.pending else ''), match.losers)),
+                render_participations(Participation
+                                        .select()
+                                        .where(Participation.match == match,
+                                               Participation.won == True)),
+                render_participations(Participation
+                                        .select()
+                                        .where(Participation.match == match,
+                                               Participation.won == False)),
                 '{} - {}'.format(match.winners_score, match.losers_score),
                 match_datetime_pst.strftime('%m/%d/%y %I:%M %p')
             ])
