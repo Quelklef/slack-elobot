@@ -1,4 +1,4 @@
-from util import mean
+from statistics import mean
 
 def k_factor(elo):
     if elo > 2400:

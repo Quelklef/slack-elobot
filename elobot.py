@@ -5,13 +5,14 @@ import itertools as it
 from datetime import datetime
 from dateutil import tz
 from collections import defaultdict
+from statistics import show
 
 from slackclient import SlackClient
 from tabulate import tabulate
 from peewee import *
 
 from models import *
-from util import mean, show, colloq_listify, colloq_rangify
+from util import colloq_listify, colloq_rangify
 from patterns import *
 from rankee import *
 
@@ -55,7 +56,7 @@ class EloBot:
             if verbose:
                 elo_delta = new_elo - old_elo
                 if elo_delta != 0:
-                    self.talk_to(handle, f'Your ELO is {new_elo} ({show(elo_delta)})')
+                    self.talk_to(handle, f'Your ELO is {new_elo} ({elo_delta:+})')
 
     def talk(self, message):
         """Send a message to the Slack channel"""
